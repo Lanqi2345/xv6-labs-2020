@@ -107,6 +107,9 @@ allocproc(void)
 found:
   p->pid = allocpid();
 
+  // 新进程默认不跟踪任何系统调用
+  p->trace_mask = 0;
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     release(&p->lock);
@@ -149,6 +152,9 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  // 清除旧进程留下的跟踪设置
+  p->trace_mask = 0;
+
   p->state = UNUSED;
 }
 
@@ -279,6 +285,9 @@ fork(void)
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
+
+  // 子进程继承父进程的跟踪掩码
+  np->trace_mask = p->trace_mask;
 
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
