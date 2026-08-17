@@ -440,3 +440,39 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
+
+//递归打印
+static void
+vmprintwalk(pagetable_t pagetable, int level)
+{
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = pagetable[i];
+
+    // 只处理有效PTE
+    if (pte & PTE_V)
+    {
+      uint64 pa = PTE2PA(pte);
+
+      // 根据页表深度打印缩进
+      for (int j = 1; j < level; j++)
+        printf(".. ");
+
+      printf("..%d: pte %p pa %p\n",i, pte, pa);
+
+      //如果R/W/X都没有设置，说明该PTE指向下一级页表，而不是最终物理页面。
+      if ((pte & (PTE_R | PTE_W | PTE_X)) == 0)
+      {
+        vmprintwalk((pagetable_t)pa, level + 1);
+      }
+    }
+  }
+}
+
+
+
+void
+vmprint(pagetable_t pagetable)
+{
+  printf("page table %p\n", pagetable);
+  vmprintwalk(pagetable, 1);
+}
