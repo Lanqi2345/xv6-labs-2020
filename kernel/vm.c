@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -21,30 +23,14 @@ extern char trampoline[]; // trampoline.S
 void
 kvminit()
 {
-  kernel_pagetable = (pagetable_t) kalloc();
-  memset(kernel_pagetable, 0, PGSIZE);
+  kernel_pagetable =kvmmake();
+  
+  //单独给全局内核页表映射 CLINT
+  kvmmap(kernel_pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
 
-  // uart registers
-  kvmmap(UART0, UART0, PGSIZE, PTE_R | PTE_W);
-
-  // virtio mmio disk interface
-  kvmmap(VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
-
-  // CLINT
-  kvmmap(CLINT, CLINT, 0x10000, PTE_R | PTE_W);
-
-  // PLIC
-  kvmmap(PLIC, PLIC, 0x400000, PTE_R | PTE_W);
-
-  // map kernel text executable and read-only.
-  kvmmap(KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
-
-  // map kernel data and the physical RAM we'll make use of.
-  kvmmap((uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
-
-  // map the trampoline for trap entry/exit to
-  // the highest virtual address in the kernel.
-  kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+  if (kernel_pagetable == 0)
+    panic("kvminit");
+  
 }
 
 // Switch h/w page table register to the kernel's page table,
@@ -114,12 +100,12 @@ walkaddr(pagetable_t pagetable, uint64 va)
 // add a mapping to the kernel page table.
 // only used when booting.
 // does not flush TLB or enable paging.
-void
-kvmmap(uint64 va, uint64 pa, uint64 sz, int perm)
+void kvmmap(pagetable_t pagetable,uint64 va,uint64 pa,uint64 sz,int perm)
 {
-  if(mappages(kernel_pagetable, va, sz, pa, perm) != 0)
+  if (mappages(pagetable, va, sz, pa, perm) != 0)
     panic("kvmmap");
 }
+
 
 // translate a kernel virtual address to
 // a physical address. only needed for
@@ -131,13 +117,26 @@ kvmpa(uint64 va)
   uint64 off = va % PGSIZE;
   pte_t *pte;
   uint64 pa;
+
+  pagetable_t pagetable;
+  struct proc *p;
+
+  p = myproc();
   
-  pte = walk(kernel_pagetable, va, 0);
+  if (p != 0 && p->kpagetable != 0)
+    pagetable = p->kpagetable;
+  else
+    pagetable = kernel_pagetable;
+
+  pte = walk(pagetable, va, 0);
   if(pte == 0)
     panic("kvmpa");
+
   if((*pte & PTE_V) == 0)
     panic("kvmpa");
+
   pa = PTE2PA(*pte);
+
   return pa+off;
 }
 
@@ -145,6 +144,7 @@ kvmpa(uint64 va)
 // physical addresses starting at pa. va and size might not
 // be page-aligned. Returns 0 on success, -1 if walk() couldn't
 // allocate a needed page-table page.
+//perm标志位
 int
 mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 {
@@ -233,6 +233,9 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 
   if(newsz < oldsz)
     return oldsz;
+
+  if (newsz >= PLIC)
+  return 0;
 
   oldsz = PGROUNDUP(oldsz);
   for(a = oldsz; a < newsz; a += PGSIZE){
@@ -376,26 +379,11 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 // Copy from user to kernel.
 // Copy len bytes to dst from virtual address srcva in a given page table.
 // Return 0 on success, -1 on error.
+//把数据复制进内核
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
-  uint64 n, va0, pa0;
-
-  while(len > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > len)
-      n = len;
-    memmove(dst, (void *)(pa0 + (srcva - va0)), n);
-
-    len -= n;
-    dst += n;
-    srcva = va0 + PGSIZE;
-  }
-  return 0;
+  return copyin_new(pagetable, dst, srcva, len);
 }
 
 // Copy a null-terminated string from user to kernel.
@@ -405,40 +393,7 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
-  uint64 n, va0, pa0;
-  int got_null = 0;
-
-  while(got_null == 0 && max > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > max)
-      n = max;
-
-    char *p = (char *) (pa0 + (srcva - va0));
-    while(n > 0){
-      if(*p == '\0'){
-        *dst = '\0';
-        got_null = 1;
-        break;
-      } else {
-        *dst = *p;
-      }
-      --n;
-      --max;
-      p++;
-      dst++;
-    }
-
-    srcva = va0 + PGSIZE;
-  }
-  if(got_null){
-    return 0;
-  } else {
-    return -1;
-  }
+  return copyinstr_new(pagetable, dst, srcva, max);
 }
 
 //递归打印
@@ -475,4 +430,118 @@ vmprint(pagetable_t pagetable)
 {
   printf("page table %p\n", pagetable);
   vmprintwalk(pagetable, 1);
+}
+
+
+//创建并返回内核页表
+pagetable_t kvmmake(void)
+{
+  pagetable_t pagetable;
+
+  pagetable = (pagetable_t)kalloc();
+  if (pagetable == 0)
+    return 0;
+
+  memset(pagetable, 0, PGSIZE);
+
+  // uart registers
+  kvmmap(pagetable,UART0, UART0, PGSIZE, PTE_R | PTE_W);
+
+  // virtio mmio disk interface
+  kvmmap(pagetable,VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+  // CLINT
+  //CLINT 映射冲突
+  //kvmmap(pagetable,CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+
+  // PLIC
+  kvmmap(pagetable,PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+
+  // map kernel text executable and read-only.
+  kvmmap(pagetable,KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+
+  // map kernel data and the physical RAM we'll make use of.
+  kvmmap(pagetable,(uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+  kvmmap(pagetable,TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+
+  return pagetable;
+}
+
+//进程退出后释放内核页表
+void kvmfree(pagetable_t pagetable)
+{
+  for(int i=0;i<512;i++)
+  {
+    pte_t pte =pagetable[i];
+    if((pte&PTE_V)==0)
+      continue;
+    
+    //不是叶子，指向下一级页表
+    if((pte&(PTE_R|PTE_W|PTE_X))==0)
+    {
+      uint64 child = PTE2PA(pte);
+      kvmfree((pagetable_t)child);
+    }
+
+    //清除页表项，不释放物理页
+    pagetable[i]=0;
+  }
+
+  kfree((void*)pagetable);
+
+}
+
+
+//实现用户映射同步函数
+int u2kvmcopy(pagetable_t user_pagetable,pagetable_t kernel_pagetable,uint64 oldsz,uint64 newsz)
+{
+
+  //printf("u2kvmcopy: pid=%d old=%p new=%p\n",myproc()->pid,oldsz,newsz);
+  uint64 start;
+  uint64 va;
+  pte_t *pte;
+  uint64 pa;
+  uint flags;
+
+  if (newsz < oldsz)
+    return -1;
+
+  // 用户地址不能达到PLIC，否则会与内核设备映射重叠
+  if (PGROUNDUP(newsz) >= PLIC)
+    return -1;
+
+  // PGROUNDUP(x)会将地址向上取整到最近的页边界
+  start = PGROUNDUP(oldsz);
+
+  for (va = start; va < newsz; va += PGSIZE)
+  {
+    pte = walk(user_pagetable, va, 0);
+
+    if (pte == 0)
+      panic("u2kvmcopy: pte");
+
+    if ((*pte & PTE_V) == 0)
+      panic("u2kvmcopy: not present");
+
+    pa = PTE2PA(*pte);
+
+    //使用用户PTE原有权限，但清除PTE_U，在Supervisor模式不能直接访问PTE_U=1的页面。
+    flags = PTE_FLAGS(*pte);
+    flags &= ~PTE_U;
+
+    if (mappages(kernel_pagetable,va,PGSIZE,pa,flags) != 0)
+    {
+      if (va > start)//映射一半，失败时的回滚，解除映射
+      {
+        uvmunmap(kernel_pagetable,start,(va - start) / PGSIZE, 0);
+      }
+
+      return -1;
+    }
+  }
+
+  return 0;
 }

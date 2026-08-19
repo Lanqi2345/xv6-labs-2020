@@ -161,7 +161,11 @@ int             uartgetc(void);
 void            kvminit(void);
 void            kvminithart(void);
 uint64          kvmpa(uint64);
-void            kvmmap(uint64, uint64, uint64, int);
+
+void            kvmmap(pagetable_t, uint64, uint64, uint64, int);//接收页表参数
+pagetable_t     kvmmake(void);//创建并返回内核页表
+void            kvmfree(pagetable_t);//进程退出后需要释放内核页表
+
 int             mappages(pagetable_t, uint64, uint64, uint64, int);
 pagetable_t     uvmcreate(void);
 void            uvminit(pagetable_t, uchar *, uint);
@@ -180,6 +184,9 @@ int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
 void            vmprint(pagetable_t);
 
+int             u2kvmcopy(pagetable_t,pagetable_t ,uint64 ,uint64);
+
+
 // plic.c
 void            plicinit(void);
 void            plicinithart(void);
@@ -193,6 +200,12 @@ void            virtio_disk_intr(void);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
+
+
+//vmcopyin.c
+int             copyin_new(pagetable_t, char *, uint64, uint64);
+int             copyinstr_new(pagetable_t, char *, uint64, uint64);
+
 
 
 

@@ -107,7 +107,28 @@ exec(char *path, char **argv)
     if(*s == '/')
       last = s+1;
   safestrcpy(p->name, last, sizeof(p->name));
-    
+  
+
+  oldsz = p->sz;
+  //删除旧用户地址在内核页表中的映射
+  if (oldsz > 0)
+  {
+    uvmunmap(p->kpagetable,0,PGROUNDUP(oldsz) / PGSIZE,0);
+  }
+
+  //新用户页表映射同步到内核页表
+  if (u2kvmcopy(pagetable,p->kpagetable,0,sz) < 0)
+  {
+    //恢复旧映射，保证exec失败时旧程序仍能运行。
+    if (oldsz > 0 && u2kvmcopy(p->pagetable,p->kpagetable,0,oldsz) < 0)
+    {
+      //恢复失败
+      panic("exec: restore kpagetable");
+    }
+    goto bad;//失败继续执行旧程序
+  }
+
+
   // Commit to the user image.
   oldpagetable = p->pagetable;
   p->pagetable = pagetable;
