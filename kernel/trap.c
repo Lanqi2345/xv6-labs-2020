@@ -73,37 +73,11 @@ usertrap(void)
     //scause = 13：Load page fault，读取未映射页面
     //scause = 15：Store/AMO page fault，写入未映射页面
     
-    uint64 va = PGROUNDDOWN(r_stval());
+    uint64 va = r_stval();
 
-    //printf("lazy alloc: va=%p\n", va);
-    //printf("lazy alloc: pid=%d name=%s va=%p sepc=%p\n",
-      // p->pid, p->name, va, r_sepc());
-
-    if(va >= p->sz || va >= MAXVA)
-    {
-      p->killed = 1;
-    }
-
-    else
-    {
-      char *mem = kalloc();
-
-      if(mem == 0)
-      {
-        p->killed=1;
-      }
-      else
-      {
-        memset(mem, 0, PGSIZE);
-
-        if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0)
-        {
-          kfree(mem);
-          p->killed=1;
-        }
-      }
-    }
-
+    if(lazyalloc(p->pagetable, va)==0)
+      p->killed=1;
+      
   }
   else
   {
