@@ -17,20 +17,38 @@ struct barrier {
 static void
 barrier_init(void)
 {
-  assert(pthread_mutex_init(&bstate.barrier_mutex, NULL) == 0);
-  assert(pthread_cond_init(&bstate.barrier_cond, NULL) == 0);
+  assert(pthread_mutex_init(&bstate.barrier_mutex, NULL) == 0);//初始化互斥锁
+  assert(pthread_cond_init(&bstate.barrier_cond, NULL) == 0);//初始化条件变量
   bstate.nthread = 0;
 }
 
-static void 
-barrier()
+static void
+barrier(void)
 {
-  // YOUR CODE HERE
-  //
-  // Block until all threads have called barrier() and
-  // then increment bstate.round.
-  //
-  
+  pthread_mutex_lock(&bstate.barrier_mutex);
+
+  //这个线程进入barrier时的轮次
+  int round = bstate.round;
+
+  //这个线程已经到达当前轮的屏障
+  bstate.nthread++;
+
+  if (bstate.nthread == nthread) {
+    //这个线程是当前轮最后一个到达的线程。重置计数器并进入下一轮，然后唤醒所有等待线程。
+    bstate.nthread = 0;
+    bstate.round++;
+
+    pthread_cond_broadcast(&bstate.barrier_cond);
+
+  } else {
+    //不是最后一个线程。
+    //只要 round 没有改变，就说明当前轮尚未结束
+    while (round == bstate.round) {
+      pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex);
+    }
+  }
+
+  pthread_mutex_unlock(&bstate.barrier_mutex);
 }
 
 static void *
