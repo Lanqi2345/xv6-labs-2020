@@ -374,38 +374,92 @@ iunlockput(struct inode *ip)
 
 // Return the disk block address of the nth block in inode ip.
 // If there is no such block, bmap allocates one.
+//把文件内部的“逻辑块号”转换成磁盘上的“物理块号”；如果对应磁盘块还不存在，就分配一个新块。
 static uint
 bmap(struct inode *ip, uint bn)
 {
-  uint addr, *a;
+  uint addr,*a;
   struct buf *bp;
-
-  if(bn < NDIRECT){
-    if((addr = ip->addrs[bn]) == 0)
-      ip->addrs[bn] = addr = balloc(ip->dev);
+  //直接块
+  if(bn<NDIRECT)
+  {
+    if((addr=ip->addrs[bn])==0)
+      ip->addrs[bn]=addr=balloc(ip->dev);//在ip所属的磁盘上找一个空闲块，将其标记为已使用并清零，然后返回这个块的物理编号。
+    
     return addr;
   }
-  bn -= NDIRECT;
 
-  if(bn < NINDIRECT){
-    // Load indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT]) == 0)
-      ip->addrs[NDIRECT] = addr = balloc(ip->dev);
-    bp = bread(ip->dev, addr);
+  bn=bn-NDIRECT;
+
+  //一级间接块
+  if(bn<NINDIRECT)
+  {
+    if((addr=ip->addrs[NDIRECT])==0)
+      ip->addrs[NDIRECT]=addr=balloc(ip->dev);
+    
+     //把指定磁盘块读取到内存的缓冲区
+    bp=bread(ip->dev,addr);
+    //块内容看作地址数组
     a = (uint*)bp->data;
+
+    // 如果对应的数据块不存在，就分配数据块
     if((addr = a[bn]) == 0){
       a[bn] = addr = balloc(ip->dev);
-      log_write(bp);
+      log_write(bp);//告诉xv6日志系统，缓冲区bp已被修改，需要作为当前文件系统事务的一部分写回磁盘。
     }
-    brelse(bp);
+
+    brelse(bp);//使用完释放，释放 bp 上的睡眠锁，减少这个缓冲区的引用计数 refcnt
     return addr;
   }
 
+  //去掉一级间接块占用的逻辑块号范围
+  bn =bn-NINDIRECT;
+
+  if(bn<NDINDIRECT)
+  {
+    uint first;
+    uint second;
+
+    first=bn/NINDIRECT;
+    second=bn%NINDIRECT;
+
+    //分配最外层的二级间接块
+    if((addr = ip->addrs[NDIRECT + 1]) == 0)
+      ip->addrs[NDIRECT + 1] = addr = balloc(ip->dev);
+
+    //读取二级间接块
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+
+    // 分配二级间接块所指向的一级间接块
+    if((addr = a[first]) == 0){
+      a[first] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+
+    brelse(bp);
+
+    // 读取刚才找到或创建的一级间接块
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+
+    // 分配真正的数据块
+    if((addr = a[second]) == 0){
+      a[second] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+
+    brelse(bp);
+    return addr;
+
+  }
+  
   panic("bmap: out of range");
 }
 
 // Truncate inode (discard contents).
 // Caller must hold ip->lock.
+//清空一个 inode 对应文件的全部内容，释放文件占用的所有数据块，并把文件大小设为 0。
 void
 itrunc(struct inode *ip)
 {
@@ -430,6 +484,33 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  if(ip->addrs[NDIRECT+1]){
+    bp = bread(ip->dev, ip->addrs[NDIRECT+1]);
+    a = (uint*)bp->data;
+    for(i = 0; i < NINDIRECT; i++){
+      if(a[i])
+      {
+        struct buf *bp2;
+        uint *a2;
+        bp2=bread(ip->dev,a[i]);
+        a2=(uint*)bp2->data;
+
+        for(j = 0; j < NINDIRECT; j++){
+          if(a[j])
+            bfree(ip->dev, a2[j]);
+        }
+
+        brelse(bp2);
+
+        bfree(ip->dev, a[i]);
+      }
+    }
+    brelse(bp);
+
+    bfree(ip->dev, ip->addrs[NDIRECT+1]);
+    ip->addrs[NDIRECT+1] = 0;
   }
 
   ip->size = 0;
