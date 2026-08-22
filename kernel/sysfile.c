@@ -297,7 +297,8 @@ sys_open(void)
 
   begin_op();
 
-  if(omode & O_CREATE){
+  if(omode & O_CREATE)
+  {
     ip = create(path, T_FILE, 0, 0);
     if(ip == 0){
       end_op();
@@ -313,6 +314,43 @@ sys_open(void)
       iunlockput(ip);
       end_op();
       return -1;
+    }
+  }
+
+  // 如果没有设置 O_NOFOLLOW，就不断跟随符号链接
+  if(!(omode & O_NOFOLLOW)){
+    int depth = 0;
+
+    while(ip->type == T_SYMLINK){
+      char target[MAXPATH];
+
+      // 防止 a -> b -> a 之类的循环
+      if(depth++ >= 10){
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+
+      n = readi(ip, 0, (uint64)target, 0, MAXPATH);
+
+      if(n <= 0 || n > MAXPATH){
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+
+      target[MAXPATH - 1] = '\0';
+
+      // 释放当前符号链接 inode
+      iunlockput(ip);
+
+      // 查找符号链接指向的路径
+      if((ip = namei(target)) == 0){
+        end_op();
+        return -1;
+      }
+      //锁定新目标inode
+      ilock(ip);
     }
   }
 
@@ -482,5 +520,40 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+//接收用户传入的目标路径 target 和链接路径 path，创建一个类型为 T_SYMLINK 的 inode，并把目标路径字符串保存为这个 inode 的文件内容。
+uint64 sys_symlink(void)
+{
+  char target[MAXPATH];
+  char path[MAXPATH];
+  struct inode *ip;
+  int n;
+
+  // 读取用户传入的两个字符串参数
+  if(argstr(0, target, MAXPATH) < 0 ||argstr(1, path, MAXPATH) < 0)
+    return -1;
+
+  begin_op();
+
+  // 创建类型为 T_SYMLINK 的 inode
+  if((ip = create(path, T_SYMLINK, 0, 0)) == 0){
+    end_op();
+    return -1;
+  }
+
+  // 把结尾的 '\0' 也写入 inode，便于之后直接作为路径使用
+  n = strlen(target) + 1;
+
+  if(writei(ip, 0, (uint64)target, 0, n) != n){
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+
+  iunlockput(ip);
+  end_op();
+
   return 0;
 }
