@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -483,4 +484,96 @@ sys_pipe(void)
     return -1;
   }
   return 0;
+}
+
+uint64
+sys_mmap(void)
+{
+  uint64 requested_addr;
+  int length;
+  int prot;
+  int flags;
+  int fd;
+  int offset;
+  struct file *f;
+  struct proc *p = myproc();
+  struct vma *v = 0;
+
+  if(argaddr(0, &requested_addr) < 0)
+    return -1;
+  if(argint(1, &length) < 0)
+    return -1;
+  if(argint(2, &prot) < 0)
+    return -1;
+  if(argint(3, &flags) < 0)
+    return -1;
+  if(argfd(4, &fd, &f) < 0)
+    return -1;
+  if(argint(5, &offset) < 0)
+    return -1;
+
+
+  // MAP_SHARED + PROT_WRITE 最终需要写回文件，
+  // 因此文件必须以可写方式打开。
+  if((flags & MAP_SHARED) &&(prot & PROT_WRITE) && f->writable == 0)
+    return -1;
+
+  // 找一个空闲 VMA。
+  for(int i = 0; i < NVMA; i++){
+    if(p->vmas[i].used == 0){
+      v = &p->vmas[i];
+      break;
+    }
+  }
+
+  if(v == 0)
+    return -1;
+
+  uint64 maplen = PGROUNDUP((uint64)length);
+  
+  /*
+   * TRAMPOLINE 位于 MAXVA-PGSIZE，
+   * trapframe 位于 MAXVA-2*PGSIZE。
+   * mmap 区域从 trapframe 下方向低地址增长。
+   */
+  uint64 addr = MAXVA - 2 * PGSIZE;
+
+  for(int i = 0; i < NVMA; i++) {
+    if(p->vmas[i].used && p->vmas[i].addr < addr)
+      addr = p->vmas[i].addr;
+  }
+
+  //防止无符号减法下溢
+  if(addr < maplen)
+    return -1;
+
+  //在最低 VMA 的下面分配
+  addr -= maplen;
+
+  if(addr < PGROUNDUP(p->sz))
+    return -1;
+  
+  v->used = 1;
+  v->addr = addr;
+  v->length = length;
+  v->prot = prot;
+  v->flags = flags;
+  v->offset = offset;
+  v->file = filedup(f);
+
+  return addr;
+}
+
+uint64 sys_munmap(void)
+{
+  uint64 addr;
+  int length;
+
+  if(argaddr(0, &addr) < 0 ||argint(1, &length) < 0)
+    return -1;
+
+  if(length <= 0)
+    return -1;
+
+  return vma_munmap(myproc(), addr, length);
 }

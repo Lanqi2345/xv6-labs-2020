@@ -107,7 +107,16 @@ exec(char *path, char **argv)
     if(*s == '/')
       last = s+1;
   safestrcpy(p->name, last, sizeof(p->name));
-    
+  
+
+  for(int i = 0; i < NVMA; i++) {
+    if(p->vmas[i].used) {
+      uint64 addr = p->vmas[i].addr;
+      uint64 length = p->vmas[i].length;
+      vma_munmap(p, addr, length);
+    }
+  }
+
   // Commit to the user image.
   oldpagetable = p->pagetable;
   p->pagetable = pagetable;

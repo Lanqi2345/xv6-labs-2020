@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
+#include "sleeplock.h"
+#include "fs.h"
+#include "file.h"
 
 struct cpu cpus[NCPU];
 
@@ -127,6 +131,9 @@ found:
     release(&p->lock);
     return 0;
   }
+
+  //初始化清零
+  memset(p->vmas, 0, sizeof(p->vmas));
 
   // Set up new context to start executing at forkret,
   // which returns to user space.
@@ -296,6 +303,12 @@ fork(void)
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
+  for(i = 0; i < NVMA; i++) {
+  if(p->vmas[i].used) {
+    np->vmas[i] = p->vmas[i];
+    np->vmas[i].file = filedup(p->vmas[i].file);
+  }
+}
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
@@ -352,6 +365,15 @@ exit(int status)
       p->ofile[fd] = 0;
     }
   }
+
+  //解除映射
+  for(int i = 0; i < NVMA; i++) {
+  if(p->vmas[i].used) {
+    uint64 addr = p->vmas[i].addr;
+    uint64 length = p->vmas[i].length;
+    vma_munmap(p, addr, length);
+  }
+}
 
   begin_op();
   iput(p->cwd);
@@ -700,4 +722,108 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+//写回函数
+static int vma_write_page(struct vma *v, uint64 va, uint64 pa, uint64 n)
+{
+  uint64 done = 0;
+  uint64 file_offset = v->offset + (va - v->addr);
+
+  //使用与 filewrite 类似的方法
+  int max = ((MAXOPBLOCKS - 1 - 1 - 2) / 2) * BSIZE;
+
+  while(done < n) {
+    uint64 count = n - done;
+    if(count > max)
+      count = max;
+
+    begin_op();
+    ilock(v->file->ip);
+    int written = writei(v->file->ip, 0, pa + done,file_offset + done, count);
+    iunlock(v->file->ip);
+    end_op();
+
+    if(written != count)
+      return -1;
+
+    done += written;
+  }
+
+  return 0;
+}
+
+//在当前进程的虚拟地址空间中，解除从addr开始、长度为length字节的mmap映射。
+int vma_munmap(struct proc *p, uint64 addr, uint64 length)
+{
+  struct vma *v = 0;
+
+  if(length == 0)
+    return -1;
+
+  for(int i = 0; i < NVMA; i++) {
+    if(p->vmas[i].used &&addr >= p->vmas[i].addr &&addr + length <= p->vmas[i].addr + p->vmas[i].length) {
+      v = &p->vmas[i];
+      break;
+    }
+  }
+
+  if(v == 0)
+    return -1;
+
+  uint64 old_addr = v->addr;
+  uint64 old_length = v->length;
+  uint64 end = addr + length;
+
+  //只会删除开头、结尾或者整个 VMA
+  if(addr != old_addr && end != old_addr + old_length)
+    return -1;
+
+  uint64 first = PGROUNDDOWN(addr);
+  uint64 last = PGROUNDUP(end);
+
+  for(uint64 va = first; va < last; va += PGSIZE)
+  {
+    pte_t *pte = walk(p->pagetable, va, 0);
+
+    if(pte == 0 || (*pte & PTE_V) == 0)
+      continue;
+
+    if(v->flags & MAP_SHARED)
+    {
+      uint64 page_start = va;
+      uint64 page_end = va + PGSIZE;
+      uint64 mapped_end = old_addr + old_length;
+
+      if(page_end > mapped_end)
+        page_end = mapped_end;
+
+      if(page_end > page_start)
+      {
+        uint64 pa = PTE2PA(*pte);
+        uint64 n = page_end - page_start;
+
+        if(vma_write_page(v, va, pa, n) < 0)
+          return -1;
+      }
+    }
+
+    uvmunmap(p->pagetable, va, 1, 1);
+  }
+  //整个
+  if(addr == old_addr && end == old_addr + old_length)
+  {
+    fileclose(v->file);
+    memset(v, 0, sizeof(*v));
+  } else if(addr == old_addr)//开头
+  {
+    v->addr += length;
+    v->offset += length;
+    v->length -= length;
+  } else //结尾
+  {
+    v->length -= length;
+  }
+
+  return 0;
 }
