@@ -2,24 +2,23 @@
 
 本仓库用于记录 MIT 6.S081 / xv6 2020 操作系统实验的实现代码。
 
-各实验分别保存在不同的 Git 分支中，`main` 分支主要用于存放项目说明和实验文档。
+各实验分别保存在不同的 Git 分支中，`main` 分支用于存放项目说明和实验文档。
 
 ## 实验分支
 
 | 分支 | 实验内容 |
 | --- | --- |
-| `util` | Unix utilities |
+| `util` | Xv6 and Unix utilities |
 | `syscall` | System calls |
 | `pgtbl` | Page tables |
 | `traps` | Traps |
-| `cow` | Copy-on-write |
+| `lazy` | xv6 lazy page allocation |
+| `cow` | Copy-on-Write Fork for xv6 |
 | `thread` | Multithreading |
-| `net` | Network driver |
 | `lock` | Lock |
 | `fs` | File system |
 | `mmap` | Memory mapping |
-
-> 实际分支以仓库中的分支列表为准。
+| `net` | Network driver |
 
 ## 查看分支
 
@@ -90,4 +89,3 @@ git branch --show-current
 ## 项目说明
 
 本仓库用于课程学习和实验记录。xv6 原始代码及实验材料的版权归其原作者所有。
-```
