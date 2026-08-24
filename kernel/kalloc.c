@@ -88,15 +88,11 @@ uint64 freemem(void)
   uint64 bytes=0;
 
   acquire(&kmem.lock);
-
   r=kmem.freelist;
-  while(r!=0)
-  {
+  while(r!=0){
     bytes+=PGSIZE;
     r=r->next;
   }
-
-
   release(&kmem.lock);
   return bytes;
 }

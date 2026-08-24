@@ -97,18 +97,16 @@ sys_uptime(void)
   return xticks;
 }
 
-uint64
-sys_trace(void)
+uint64 sys_trace(void)
 {
   int mask;
-  if(argint(0, &mask) < 0)
+  if(argint(0, &mask) < 0)//从用户参数中取出掩码
     return -1;
-  myproc()->trace_mask = mask;
+  myproc()->trace_mask = mask;//将掩码保存进当前进程
   return 0;
 }
 
-uint64 
-sys_sysinfo(void)
+uint64 sys_sysinfo(void)
 {
   struct sysinfo info;
   uint64 user_address;
@@ -117,7 +115,6 @@ sys_sysinfo(void)
   if(argaddr(0,&user_address)<0)
     return -1;
 
-  
   info.freemem = freemem();
   info.nproc = nproc();
 
