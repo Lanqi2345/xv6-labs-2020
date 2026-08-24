@@ -95,26 +95,94 @@ e1000_init(uint32 *xregs)
 int
 e1000_transmit(struct mbuf *m)
 {
-  //
-  // Your code here.
-  //
-  // the mbuf contains an ethernet frame; program it into
-  // the TX descriptor ring so that the e1000 sends it. Stash
-  // a pointer so that it can be freed after sending.
-  //
-  
+  acquire(&e1000_lock);
+
+  // TDT 指向驱动应该填写的下一个发送描述符。
+  uint32 index = regs[E1000_TDT];//读取网卡的 TDT 硬件寄存器
+  struct tx_desc *desc = &tx_ring[index];
+
+  // DD 没有置位，说明网卡还没有使用完这个描述符。
+  // 此时不能覆盖它，否则会破坏尚未完成的发送操作。
+  if ((desc->status & E1000_TXD_STAT_DD) == 0) {
+    release(&e1000_lock);
+    return -1;
+  }
+
+  // 网卡已经发送完这个位置原来的数据。
+  // 因此现在可以释放原来由这个描述符引用的 mbuf。
+  if (tx_mbufs[index] != 0) {
+    mbuffree(tx_mbufs[index]);
+    tx_mbufs[index] = 0;
+  }
+
+  // 让描述符指向当前要发送的数据包。
+  desc->addr = (uint64)m->head;
+  desc->length = m->len;
+
+  // EOP：这个描述符包含数据包的最后一段。RS：发送完成后，请网卡把 DD 状态写回来。
+  desc->cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS;
+
+  // 清除旧状态，表示这个描述符现在交给网卡处理。
+  desc->status = 0;
+
+  // 保存 mbuf，等网卡发送完成后再释放。
+  tx_mbufs[index] = m;
+
+  // 保证描述符内容先写入内存，再通知网卡。
+  __sync_synchronize();
+
+  // 推进发送环的尾指针，通知网卡有新包需要发送。
+  regs[E1000_TDT] = (index + 1) % TX_RING_SIZE;
+
+  release(&e1000_lock);
   return 0;
 }
 
 static void
 e1000_recv(void)
 {
-  //
-  // Your code here.
-  //
-  // Check for packets that have arrived from the e1000
-  // Create and deliver an mbuf for each packet (using net_rx()).
-  //
+  while (1)
+  {
+    acquire(&e1000_lock);
+
+    // RDT 指向驱动最后处理完并归还给网卡的描述符。
+    // 所以下一个可能包含新数据包的位置是 RDT + 1。
+    uint32 index = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+    struct rx_desc *desc = &rx_ring[index];
+
+    // 没有 DD，说明网卡还没有在这个描述符中放入新数据。
+    if ((desc->status & E1000_RXD_STAT_DD) == 0) {
+      release(&e1000_lock);
+      break;
+    }
+
+    // 取出网卡刚刚写入数据的旧 mbuf。
+    struct mbuf *m = rx_mbufs[index];
+    m->len = desc->length;
+
+    // 当前 mbuf 将交给网络协议栈。
+    // 因此必须给网卡准备一个新的空 mbuf。
+    struct mbuf *new_m = mbufalloc(0);
+    if (new_m == 0)
+      panic("e1000_recv");
+
+    rx_mbufs[index] = new_m;
+    desc->addr = (uint64)new_m->head;
+
+    // 清除完成状态，让网卡以后可以再次使用这个描述符。
+    desc->status = 0;
+
+    // 确保新缓冲区地址和状态已经写入描述符。
+    __sync_synchronize();
+
+    // 把这个描述符归还给网卡。
+    regs[E1000_RDT] = index;
+
+    release(&e1000_lock);
+
+    // 交给 IP/ARP/UDP 网络协议栈处理
+    net_rx(m);
+  }
 }
 
 void
