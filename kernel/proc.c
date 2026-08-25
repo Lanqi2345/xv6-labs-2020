@@ -274,38 +274,29 @@ growproc(int n)
   oldsz = p->sz;
   sz = oldsz;
 
-  if (n > 0)
-  {
+  if (n > 0){
     //防止用户地址增长到PLIC
     if ((uint64)n > PLIC - oldsz)
       return -1;
-
     if ((sz = uvmalloc(p->pagetable,oldsz,oldsz + n)) == 0)
-    {
       return -1;
-    }
-
-    if (u2kvmcopy(p->pagetable,p->kpagetable,oldsz,sz) < 0)
-    {
+    if (u2kvmcopy(p->pagetable,p->kpagetable,oldsz,sz) < 0){
       uvmdealloc(p->pagetable, sz, oldsz);
       return -1;
     }
   } 
-  else if (n < 0) 
-  {
+  else if (n < 0) {
     //释放用户物理页
     sz = uvmdealloc(p->pagetable, oldsz,oldsz + n);
 
     uint64 oldend = PGROUNDUP(oldsz);
     uint64 newend = PGROUNDUP(sz);
 
-    if (newend < oldend)
-    {
+    if (newend < oldend){
       //删除内核页表中的别名映射，
       uvmunmap(p->kpagetable,newend,(oldend - newend) / PGSIZE,0);
     }
   }
-
   p->sz = sz;
   return 0;
 }

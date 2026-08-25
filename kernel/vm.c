@@ -400,15 +400,16 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 static void
 vmprintwalk(pagetable_t pagetable, int level)
 {
-  for (int i = 0; i < 512; i++) {
+  for(int i = 0; i < 512; i++)//遍历当前页表的512个 PTE
+  {
     pte_t pte = pagetable[i];
 
-    // 只处理有效PTE
-    if (pte & PTE_V)
+   
+    if(pte & PTE_V) //只处理有效PTE
     {
-      uint64 pa = PTE2PA(pte);
+      uint64 pa = PTE2PA(pte);//使用PTE2PA()提取物理地址
 
-      // 根据页表深度打印缩进
+      //根据页表深度打印缩进
       for (int j = 1; j < level; j++)
         printf(".. ");
 
@@ -417,7 +418,7 @@ vmprintwalk(pagetable_t pagetable, int level)
       //如果R/W/X都没有设置，说明该PTE指向下一级页表，而不是最终物理页面。
       if ((pte & (PTE_R | PTE_W | PTE_X)) == 0)
       {
-        vmprintwalk((pagetable_t)pa, level + 1);
+        vmprintwalk((pagetable_t)pa, level + 1);//递归访问
       }
     }
   }
@@ -491,14 +492,11 @@ void kvmfree(pagetable_t pagetable)
   }
 
   kfree((void*)pagetable);
-
 }
 
 
 //实现用户映射同步函数
-int u2kvmcopy(pagetable_t user_pagetable,pagetable_t kernel_pagetable,uint64 oldsz,uint64 newsz)
-{
-
+int u2kvmcopy(pagetable_t user_pagetable,pagetable_t kernel_pagetable,uint64 oldsz,uint64 newsz){
   //printf("u2kvmcopy: pid=%d old=%p new=%p\n",myproc()->pid,oldsz,newsz);
   uint64 start;
   uint64 va;
@@ -508,21 +506,17 @@ int u2kvmcopy(pagetable_t user_pagetable,pagetable_t kernel_pagetable,uint64 old
 
   if (newsz < oldsz)
     return -1;
-
   // 用户地址不能达到PLIC，否则会与内核设备映射重叠
   if (PGROUNDUP(newsz) >= PLIC)
     return -1;
-
   // PGROUNDUP(x)会将地址向上取整到最近的页边界
   start = PGROUNDUP(oldsz);
 
-  for (va = start; va < newsz; va += PGSIZE)
-  {
+  for (va = start; va < newsz; va += PGSIZE){
     pte = walk(user_pagetable, va, 0);
 
     if (pte == 0)
       panic("u2kvmcopy: pte");
-
     if ((*pte & PTE_V) == 0)
       panic("u2kvmcopy: not present");
 
@@ -532,16 +526,11 @@ int u2kvmcopy(pagetable_t user_pagetable,pagetable_t kernel_pagetable,uint64 old
     flags = PTE_FLAGS(*pte);
     flags &= ~PTE_U;
 
-    if (mappages(kernel_pagetable,va,PGSIZE,pa,flags) != 0)
-    {
+    if (mappages(kernel_pagetable,va,PGSIZE,pa,flags) != 0){
       if (va > start)//映射一半，失败时的回滚，解除映射
-      {
         uvmunmap(kernel_pagetable,start,(va - start) / PGSIZE, 0);
-      }
-
       return -1;
     }
   }
-
   return 0;
 }
