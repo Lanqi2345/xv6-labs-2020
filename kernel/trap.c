@@ -77,9 +77,9 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  if(which_dev == 2)//本次陷阱来自时钟中断
   {
-    if(p->alarm_interval > 0 && !p->alarm_handling)
+    if(p->alarm_interval > 0 && !p->alarm_handling)//防止处理函数尚未结束时再次触发报警
     {
       p->alarm_ticks++;
 
@@ -87,9 +87,10 @@ usertrap(void)
       {
         p->alarm_ticks = 0;
         p->alarm_handling = 1;
-        
+        //保存被中断程序的现场
         memmove(&p->alarm_tf, p->trapframe,sizeof(struct trapframe));
-
+        //内核返回用户态时，会从陷阱帧中的 epc 继续执行。
+        //使进程返回用户态后执行报警处理函数
         p->trapframe->epc = p->alarm_handler;
       }
     }
