@@ -85,7 +85,6 @@ binit(void)
     bcache.buckets[i].head.next = &bcache.buckets[i].head;
   }
 
-  
   for(int i=0;i<NBUF;i++)
   {
     b=&bcache.buf[i];
@@ -102,7 +101,6 @@ binit(void)
     b->bucket = h;
 
     binsert(&bcache.buckets[h], b);
-
   }
 }
 
@@ -116,7 +114,7 @@ bget(uint dev, uint blockno)
   struct buf *victim;
   int h;
 
-  h=bhash(blockno);
+  h=bhash(blockno);//计算目标桶
 
   //目标桶里查找
   acquire(&bcache.buckets[h].lock);
@@ -136,6 +134,7 @@ bget(uint dev, uint blockno)
 
   // Not cached.
   // Recycle the least recently used (LRU) unused buffer.
+  //缓存未命中时获取全局锁
   //保证同一时刻只有一个线程执行缓存淘汰
   acquire(&bcache.lock);
 
@@ -192,12 +191,13 @@ retry_victim:
 
   acquire(&bcache.buckets[oldh].lock);
 
+  //重新检查 victim 是否仍然空闲
   if (victim->refcnt != 0) {
     release(&bcache.buckets[oldh].lock);
     goto retry_victim;
   }
 
-  if (oldh == h)//旧块和新块映射到同一个桶。
+  if (oldh == h)//旧块和新块映射到同一个桶，直接修改其身份
   {
     victim->dev = dev;
     victim->blockno = blockno;

@@ -32,7 +32,7 @@ kinit()
     kmem[i].freelist = 0;
   }
   
-  freerange(end, (void*)PHYSTOP);
+  freerange(end, (void*)PHYSTOP);////通过kfree()把初始空闲页加入当前CPU的链表
 }
 
 void
@@ -76,8 +76,7 @@ kfree(void *pa)
 // Allocate one 4096-byte page of physical memory.
 // Returns a pointer that the kernel can use.
 // Returns 0 if the memory cannot be allocated.
-void *
-kalloc(void)
+void * kalloc(void)
 {
   struct run *r;
 
@@ -92,26 +91,21 @@ kalloc(void)
   release(&kmem[id].lock);
 
   //当前 CPU 没有空闲页时，从其他 CPU 偷一个
-  if(r == 0)
-  {
-    for(int i = 0; i < NCPU; i++)
-    {
+  if(r == 0){
+    for(int i = 0; i < NCPU; i++){
       if (i == id)
         continue;
 
       acquire(&kmem[i].lock);
-
       r = kmem[i].freelist;
       if (r)
         kmem[i].freelist = r->next;
-
       release(&kmem[i].lock);
 
       if (r)
         break;
     }
   }
-
   pop_off();
 
   if(r)
