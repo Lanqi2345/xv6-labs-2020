@@ -60,15 +60,12 @@ kfree(void *pa)
 {
   struct run *r;
   
-
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
   acquire(&refcnt.lock);
-
   refcnt.count[(uint64)pa / PGSIZE]--;
   int refs = refcnt.count[(uint64)pa / PGSIZE];
-
   release(&refcnt.lock);
 
   if(refs > 0)//引用计数仍大于0，直接返回

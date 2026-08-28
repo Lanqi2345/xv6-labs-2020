@@ -306,14 +306,12 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
 //将父进程的物理页面映射到子进程中
-int
-uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
+int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
   uint flags;
   
-
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
@@ -322,22 +320,17 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     pa = PTE2PA(*pte);//页面的地址
     flags = PTE_FLAGS(*pte);//页面的标志
 
-    if(flags & PTE_W)
-    {
+    if(flags & PTE_W){
       flags = (flags & ~PTE_W) | PTE_COW;//清除写权限，增加cow标志
       *pte = PA2PTE(pa) | flags;
     }
-    //在 new 页表中：
-    //虚拟地址 i  ─────→  物理地址 pa
-    //映射长度：PGSIZE
-    //权限标志：flags
+    //在 new 页表中：虚拟地址 i  ─────→  物理地址 pa，映射长度：PGSIZE，权限标志：flags
     if(mappages(new, i, PGSIZE, pa, flags) != 0)
       goto err;
-
+    
     //引用计数增加1
     kaddref(pa);
   }
-
   //刷新TLB
   sfence_vma();
   return 0;
@@ -365,8 +358,7 @@ uvmclear(pagetable_t pagetable, uint64 va)
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
-int
-copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
+int copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
   pte_t *pte;
@@ -377,18 +369,15 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
       return -1;
     //获取当前目标地址所在页面的起始虚拟地址
     va0 = PGROUNDDOWN(dstva);
-
     //找到目标页面的页表项
     pte = walk(pagetable, va0, 0);
     if(pte == 0)
       return -1;
-
     //copyout()由内核执行，不会自动产生用户页错误，目标是COW页面，需要主动复制。
     if((*pte & PTE_COW) != 0){
       if(cowalloc(pagetable, va0) < 0)
         return -1;
     }
-
     //cowalloc()可能修改了PTE，重新取得物理地址。
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
@@ -481,42 +470,31 @@ int cowalloc(pagetable_t pagetable, uint64 va)
   uint64 pa;
   uint flags;
   char *mem;
-
   //向下对齐
   va = PGROUNDDOWN(va);
-
   //超过MAXVA的地址
   if(va >= MAXVA)
     return -1;
-
   pte = walk(pagetable, va, 0);
   if(pte == 0)
     return -1;
-
   //页面有效，用户可以访问，页面确实是 COW 页面
   if((*pte & PTE_V) == 0 ||(*pte & PTE_U) == 0 ||(*pte & PTE_COW) == 0)
     return -1;
-
   pa = PTE2PA(*pte);
   flags = PTE_FLAGS(*pte);
-
   //为当前进程分配自己的物理页。
   mem = kalloc();
   if(mem == 0)
     return -1;
-
   //将共享物理页的内容复制到新页。
   memmove(mem, (char*)pa, PGSIZE);
-
   //当前进程的页表改为指向新物理页，增加写权限，清除 COW 标志，其余标志保持不变
   flags = (flags | PTE_W) & ~PTE_COW;
   *pte = PA2PTE((uint64)mem) | flags;
-
   //当前进程不再引用旧页，kfree减少引用计数
   kfree((void*)pa);
-
   //页表已经变化，清除旧的 TLB 缓存
   sfence_vma();
-
   return 0;
 }
