@@ -33,7 +33,7 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
-
+//处理进程第一次访问 mmap() 映射区域时产生的缺页异常，按需分配物理页，并把对应的文件内容加载到该页面中
 static int
 mmap_page_fault(struct proc *p, uint64 fault_addr, uint64 cause)
 {

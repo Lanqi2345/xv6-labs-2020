@@ -486,6 +486,7 @@ sys_pipe(void)
   return 0;
 }
 
+//在进程的虚拟地址空间中建立一段“文件到内存”的映射，并把这段映射的起始虚拟地址返回给用户程序。
 uint64
 sys_mmap(void)
 {
@@ -511,7 +512,6 @@ sys_mmap(void)
     return -1;
   if(argint(5, &offset) < 0)
     return -1;
-
 
   // MAP_SHARED + PROT_WRITE 最终需要写回文件，
   // 因此文件必须以可写方式打开。
